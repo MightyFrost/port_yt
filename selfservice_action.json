@@ -1,0 +1,30 @@
+{
+  "identifier": "ingest",
+  "title": "ingest",
+  "icon": "Airflow",
+  "trigger": {
+    "type": "self-service",
+    "operation": "CREATE",
+    "userInputs": {
+      "properties": {},
+      "required": [],
+      "order": []
+    },
+    "blueprintIdentifier": "dependency"
+  },
+  "invocationMethod": {
+    "type": "GITHUB",
+    "org": "MightyFrost",
+    "repo": "port_yt",
+    "workflow": "workflow.yml",
+    "workflowInputs": {
+      "{{ spreadValue() }}": "{{ .inputs }}",
+      "port_context": {
+        "runId": "{{ .run.id }}",
+        "blueprint": "{{ .action.blueprint }}"
+      }
+    },
+    "reportWorkflowStatus": true
+  },
+  "requiredApproval": false
+}
