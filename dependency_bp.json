@@ -1,0 +1,36 @@
+{
+  "identifier": "dependency",
+  "title": "Dependency",
+  "icon": "Package",
+  "schema": {
+    "properties": {
+      "videoId": {
+        "icon": "DefaultProperty",
+        "type": "string",
+        "title": "Video ID"
+      },
+      "title": {
+        "type": "string",
+        "title": "Video title"
+      },
+      "description": {
+        "type": "string",
+        "title": "Description"
+      },
+      "thumbnail": {
+        "type": "string",
+        "title": "Thumbnail URL",
+        "format": "url"
+      },
+      "publishedAt": {
+        "type": "string",
+        "title": "Publish date"
+      }
+    },
+    "required": []
+  },
+  "mirrorProperties": {},
+  "calculationProperties": {},
+  "aggregationProperties": {},
+  "relations": {}
+}
