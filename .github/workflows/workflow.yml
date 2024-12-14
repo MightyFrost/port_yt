@@ -156,7 +156,7 @@ jobs:
             echo "$PAYLOAD"
 
             # Send the payload
-            curl -L 'https://api.getport.io/v1/blueprints/dependency/entities' \
+            curl -L 'https://api.getport.io/v1/blueprints/dependency/entities?upsert=true' \
               -H 'Content-Type: application/json' \
               -H "Authorization: ${{ secrets.PORT_API_TOKEN }}" \
               -d "$PAYLOAD"
