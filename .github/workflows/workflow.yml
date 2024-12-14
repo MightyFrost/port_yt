@@ -32,53 +32,66 @@ jobs:
       env:
         YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       run: |
-        echo '
-        import os
-        import requests
+        echo 'import requests
         import json
-
-        # YouTube playlist ID from the given URL
+        import os
+        
+        # YouTube playlist ID
         playlist_id = "PL5ErBr2d3QJH0kbwTQ7HSuzvBb4zIWzhy"
-
-        # YouTube API endpoint for fetching playlist items
         api_url = "https://www.googleapis.com/youtube/v3/playlistItems"
-
-        # Parameters for the API request
-        params = {
-            "part": "snippet",
-            "playlistId": playlist_id,
-            "maxResults": 500,
-            "key": os.getenv("YOUTUBE_API_KEY")
-        }
-
-        # Make the GET request
-        response = requests.get(api_url, params=params)
-
-        if response.status_code == 200:
-            data = response.json()
-            items = []
-            for item in data.get("items", []):
-                snippet = item.get("snippet", {})
-                items.append({
-                    "videoId": snippet.get("resourceId", {}).get("videoId"),
-                    "title": snippet.get("title"),
-                    "description": snippet.get("description"),
-                    "thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url"),
-                    "publishedAt": snippet.get("publishedAt")
-                })
-
-            with open("playlist_items.json", "w") as f:
-                json.dump(items, f, indent=2)
-
-            print("Playlist items saved successfully.")
-        else:
-            print(f"Error fetching playlist: {response.status_code} {response.text}")
-            exit(1)
-
+        
+        all_items = []
+        next_page_token = None
+        
+        while True:
+            # Parameters for the API request
+            params = {
+                "part": "snippet",
+                "playlistId": playlist_id,
+                "maxResults": 50,
+                "key": os.getenv("YOUTUBE_API_KEY"),
+            }
+            if next_page_token:
+                params["pageToken"] = next_page_token
+        
+            # Make the GET request
+            response = requests.get(api_url, params=params)
+        
+            if response.status_code == 200:
+                data = response.json()
+        
+                # Add the items from this page to the list
+                for item in data.get("items", []):
+                    snippet = item.get("snippet", {})
+                    all_items.append({
+                        "videoId": snippet.get("resourceId", {}).get("videoId"),
+                        "title": snippet.get("title"),
+                        "description": snippet.get("description"),
+                        "thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url"),
+                        "publishedAt": snippet.get("publishedAt"),
+                    })
+        
+                # Check if there is another page
+                next_page_token = data.get("nextPageToken")
+                if not next_page_token:
+                    break
+            else:
+                print(f"Error fetching playlist: {response.status_code} {response.text}")
+                exit(1)
+        
+        # Save all items to a JSON file
+        with open("playlist_items.json", "w") as f:
+            json.dump(all_items, f, indent=2)
+        
+        print(f"Fetched {len(all_items)} items from the playlist.")
+        
+        # Save the JSON file as an artifact
         os.makedirs("artifacts", exist_ok=True)
         os.rename("playlist_items.json", "artifacts/playlist_items.json")
-        ' > fetch_playlist.py
-        python fetch_playlist.py
+                ' > fetch_playlist.py
+        
+                python fetch_playlist.py
+
 
     - name: Upload playlist data as artifact
       uses: actions/upload-artifact@v3
