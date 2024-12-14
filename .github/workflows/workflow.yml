@@ -109,7 +109,7 @@ jobs:
     
             # Prepare JSON payload for Port API
             PAYLOAD=$(jq -n \
-              --arg identifier "dependency" \
+              --arg identifier "$VIDEO_ID" \
               --arg title "$TITLE" \
               --arg icon "Package" \
               --arg videoId "$VIDEO_ID" \
