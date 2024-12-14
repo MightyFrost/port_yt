@@ -47,7 +47,7 @@ jobs:
         params = {
             "part": "snippet",
             "playlistId": playlist_id,
-            "maxResults": 50,
+            "maxResults": 500,
             "key": os.getenv("YOUTUBE_API_KEY")
         }
 
@@ -109,7 +109,8 @@ jobs:
         if [[ $(echo "$PLAYLIST_ITEMS" | jq 'type') == '"array"' ]]; then
           echo "Valid JSON array detected."
 
-          echo "$PLAYLIST_ITEMS" | jq -c '.[]' | while read ITEM; do
+          # Process each JSON object using a while loop
+          echo "$PLAYLIST_ITEMS" | jq -c '.[]' | while IFS= read -r ITEM; do
             VIDEO_ID=$(echo "$ITEM" | jq -r '.videoId')
             TITLE=$(echo "$ITEM" | jq -r '.title')
             DESCRIPTION=$(echo "$ITEM" | jq -r '.description')
@@ -141,6 +142,7 @@ jobs:
             echo "Payload to be ingested:"
             echo "$PAYLOAD"
 
+            # Send the payload
             curl -L 'https://api.getport.io/v1/blueprints/dependency/entities' \
               -H 'Content-Type: application/json' \
               -H "Authorization: ${{ secrets.PORT_API_TOKEN }}" \
