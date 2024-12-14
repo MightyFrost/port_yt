@@ -1,18 +1,18 @@
-name: Ingest YouTube Playlist Data  
+name: Ingest YouTube Playlist Data
 
-on:  
-  workflow_dispatch:  # Allow manual trigger  
+on:
+  workflow_dispatch:
     inputs:
-          port_context:
-            description: "The port context input"
-            required: false
-            default: ""
-            
+      port_context:
+        description: "The port context input"
+        required: false
+        default: ""
+
 jobs:
   fetch-playlist:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Allow writing to the repository
+      contents: write
 
     steps:
     - name: Checkout repository
@@ -28,42 +28,67 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
 
-    - name: Fetch playlist data and save as JSON
+    - name: Fetch playlist data from YouTube API
+      env:
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       run: |
-        # Read the playlist data (assuming it exists in playlist_data.json)
-        PLAYLIST_DATA=$(cat playlist_data.json)
-    
-        # Extract the "items" array from the playlist data
-        ITEMS_ARRAY=$(echo "$PLAYLIST_DATA" | jq '.items')
+        echo '
+        import os
+        import requests
+        import json
 
-        # Save the extracted array to a file
-        if [ -n "$ITEMS_ARRAY" ]; then
-          echo "$ITEMS_ARRAY" > playlist_items.json
-          echo "Playlist items saved successfully."
-        else
-          echo "Error: No 'items' array found in playlist_data.json."
-          exit 1
-        fi
-    
-        # Debugging: Display the extracted array
-        echo "Extracted playlist items:"
-        cat playlist_items.json
+        # YouTube playlist ID from the given URL
+        playlist_id = "PL5ErBr2d3QJH0kbwTQ7HSuzvBb4zIWzhy"
 
-        # Upload the saved file as an artifact for the next step
-        mkdir -p artifacts
-        mv playlist_items.json artifacts/
-    
+        # YouTube API endpoint for fetching playlist items
+        api_url = "https://www.googleapis.com/youtube/v3/playlistItems"
+
+        # Parameters for the API request
+        params = {
+            "part": "snippet",
+            "playlistId": playlist_id,
+            "maxResults": 50,
+            "key": os.getenv("YOUTUBE_API_KEY")
+        }
+
+        # Make the GET request
+        response = requests.get(api_url, params=params)
+
+        if response.status_code == 200:
+            data = response.json()
+            items = []
+            for item in data.get("items", []):
+                snippet = item.get("snippet", {})
+                items.append({
+                    "videoId": snippet.get("resourceId", {}).get("videoId"),
+                    "title": snippet.get("title"),
+                    "description": snippet.get("description"),
+                    "thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url"),
+                    "publishedAt": snippet.get("publishedAt")
+                })
+
+            with open("playlist_items.json", "w") as f:
+                json.dump(items, f, indent=2)
+
+            print("Playlist items saved successfully.")
+        else:
+            print(f"Error fetching playlist: {response.status_code} {response.text}")
+            exit(1)
+
+        os.makedirs("artifacts", exist_ok=True)
+        os.rename("playlist_items.json", "artifacts/playlist_items.json")
+        ' > fetch_playlist.py
+        python fetch_playlist.py
+
     - name: Upload playlist data as artifact
       uses: actions/upload-artifact@v3
       with:
         name: playlist-items
         path: artifacts/playlist_items.json
 
-
-
   ingest-playlist:
     runs-on: ubuntu-latest
-    needs: fetch-playlist  # Make sure step 1 completes successfully
+    needs: fetch-playlist
 
     steps:
     - name: Download playlist items artifact
@@ -75,39 +100,22 @@ jobs:
     - name: Debug and Ingest playlist items into Port
       run: |
         echo "Reading playlist items from file..."
-    
-        # Ensure the playlist_items.json file is being read correctly
-        cat playlist_items.json
-    
-        # Store the entire array of items from the playlist_items.json
+
         PLAYLIST_ITEMS=$(cat playlist_items.json)
-    
-        # Debugging: print the contents of PLAYLIST_ITEMS to confirm it's correct
+
         echo "Playlist Items (full data):"
         echo "$PLAYLIST_ITEMS"
-    
-        # Check if the items array exists and contains valid data
+
         if [[ $(echo "$PLAYLIST_ITEMS" | jq 'type') == '"array"' ]]; then
           echo "Valid JSON array detected."
-          
-          # Loop through the items array in the correct format
+
           echo "$PLAYLIST_ITEMS" | jq -c '.[]' | while read ITEM; do
-            # Extract fields from the ITEM object
             VIDEO_ID=$(echo "$ITEM" | jq -r '.videoId')
             TITLE=$(echo "$ITEM" | jq -r '.title')
             DESCRIPTION=$(echo "$ITEM" | jq -r '.description')
             THUMBNAIL=$(echo "$ITEM" | jq -r '.thumbnail')
             PUBLISHED_AT=$(echo "$ITEM" | jq -r '.publishedAt')
-    
-            # Debugging: Show the extracted fields
-            echo "Extracted Data:"
-            echo "videoId: $VIDEO_ID"
-            echo "title: $TITLE"
-            echo "description: $DESCRIPTION"
-            echo "thumbnail: $THUMBNAIL"
-            echo "publishedAt: $PUBLISHED_AT"
-    
-            # Prepare JSON payload for Port API
+
             PAYLOAD=$(jq -n \
               --arg identifier "$VIDEO_ID" \
               --arg title "$TITLE" \
@@ -129,12 +137,10 @@ jobs:
                 },
                 relations: {}
               }')
-    
-            # Debugging: Show the payload before sending it
+
             echo "Payload to be ingested:"
             echo "$PAYLOAD"
-    
-            # Make the API request to Port using curl
+
             curl -L 'https://api.getport.io/v1/blueprints/dependency/entities' \
               -H 'Content-Type: application/json' \
               -H "Authorization: ${{ secrets.PORT_API_TOKEN }}" \
