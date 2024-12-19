@@ -1,0 +1,238 @@
+name: Ingest YouTube Playlist Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      port_context:
+        description: "The port context input"
+        required: false
+        default: ""
+
+jobs:
+  fetch-playlist:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Fetch playlist data from YouTube API
+      env:
+        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      run: |
+        cat <<'EOF' > fetch_playlist.py
+        import requests
+        import json
+        import os
+        import re
+        
+        def iso_duration_to_seconds(duration):
+            """Converts ISO 8601 duration format to total seconds."""
+            # Regular expression to match ISO 8601 duration
+            pattern = re.compile(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?')
+            
+            # Match the duration string against the regex pattern
+            match = pattern.match(duration)
+            
+            if not match:
+                return 0  # Return 0 if the format is incorrect or not matched
+            
+            # Extract hours, minutes, and seconds from the regex match groups
+            hours = int(match.group(1) or 0)
+            minutes = int(match.group(2) or 0)
+            seconds = int(match.group(3) or 0)
+            
+            # Convert everything to seconds
+            total_seconds = hours * 3600 + minutes * 60 + seconds
+            return total_seconds
+        
+        # YouTube playlist ID
+        playlist_id = "PL5ErBr2d3QJH0kbwTQ7HSuzvBb4zIWzhy"
+        api_url = "https://www.googleapis.com/youtube/v3/playlistItems"
+        video_api_url = "https://www.googleapis.com/youtube/v3/videos"
+        
+        all_items = []
+        next_page_token = None
+        
+        while True:
+            # Parameters for the API request
+            params = {
+                "part": "snippet",
+                "playlistId": playlist_id,
+                "maxResults": 50,
+                "key": os.getenv("YOUTUBE_API_KEY"),
+            }
+            if next_page_token:
+                params["pageToken"] = next_page_token
+        
+            # Make the GET request for playlist items
+            response = requests.get(api_url, params=params)
+        
+            if response.status_code == 200:
+                data = response.json()
+        
+                # Add the items from this page to the list
+                for item in data.get("items", []):
+                    snippet = item.get("snippet", {})
+                    video_id = snippet.get("resourceId", {}).get("videoId")
+        
+                    # Fetch additional video details using the video ID
+                    video_params = {
+                        "part": "snippet,statistics,contentDetails",  # Include contentDetails for duration
+                        "id": video_id,
+                        "key": os.getenv("YOUTUBE_API_KEY"),
+                    }
+                    video_response = requests.get(video_api_url, params=video_params)
+        
+                    if video_response.status_code == 200:
+                        video_data = video_response.json()
+        
+                        if "items" in video_data and len(video_data["items"]) > 0:
+                            video_details = video_data["items"][0]
+                            statistics = video_details.get("statistics", {})
+                            content_details = video_details.get("contentDetails", {})
+                            duration = content_details.get("duration", "PT0S")
+                            
+                            # Convert duration to total seconds
+                            duration_in_seconds = iso_duration_to_seconds(duration)
+        
+                            additional_data = {
+                                "viewCount": statistics.get("viewCount"),
+                                "likeCount": statistics.get("likeCount"),
+                                "dislikeCount": statistics.get("dislikeCount"),
+                                "commentCount": statistics.get("commentCount"),
+                                "durationInSeconds": duration_in_seconds  # Add converted duration
+                            }
+                        else:
+                            additional_data = {}
+        
+                        all_items.append({
+                            "videoId": video_id,
+                            "title": snippet.get("title"),
+                            "description": snippet.get("description"),
+                            "thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url"),
+                            "publishedAt": snippet.get("publishedAt"),
+                            **additional_data,
+                        })
+        
+                    else:
+                        print(f"Error fetching video details for {video_id}: {video_response.status_code} {video_response.text}")
+        
+                # Check if there is another page
+                next_page_token = data.get("nextPageToken")
+                if not next_page_token:
+                    break
+            else:
+                print(f"Error fetching playlist: {response.status_code} {response.text}")
+                exit(1)
+        
+        # Save all items to a JSON file
+        with open("playlist_items.json", "w") as f:
+            json.dump(all_items, f, indent=2)
+        
+        print(f"Fetched {len(all_items)} items from the playlist.")
+        
+        # Save the JSON file as an artifact
+        os.makedirs("artifacts", exist_ok=True)
+        os.rename("playlist_items.json", "artifacts/playlist_items.json")
+        EOF
+        
+            python fetch_playlist.py
+
+
+    - name: Upload playlist data as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: playlist-items
+        path: artifacts/playlist_items.json
+
+  ingest-playlist:
+    runs-on: ubuntu-latest
+    needs: fetch-playlist
+
+    steps:
+    - name: Download playlist items artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: playlist-items
+        path: .
+
+    - name: Debug and Ingest playlist items into Port
+      run: |
+        echo "Reading playlist items from file..."
+        
+        PLAYLIST_ITEMS=$(cat playlist_items.json)
+        
+        echo "Playlist Items (full data):"
+        echo "$PLAYLIST_ITEMS"
+        
+        if [[ $(echo "$PLAYLIST_ITEMS" | jq 'type') == '"array"' ]]; then
+          echo "Valid JSON array detected."
+        
+          # Process each JSON object using a while loop
+          echo "$PLAYLIST_ITEMS" | jq -c '.[]' | while IFS= read -r ITEM; do
+            VIDEO_ID=$(echo "$ITEM" | jq -r '.videoId')
+            TITLE=$(echo "$ITEM" | jq -r '.title')
+            DESCRIPTION=$(echo "$ITEM" | jq -r '.description')
+            THUMBNAIL=$(echo "$ITEM" | jq -r '.thumbnail')
+            PUBLISHED_AT=$(echo "$ITEM" | jq -r '.publishedAt')
+            VIEW_COUNT=$(echo "$ITEM" | jq -r '.viewCount')
+            LIKE_COUNT=$(echo "$ITEM" | jq -r '.likeCount')
+            DISLIKE_COUNT=$(echo "$ITEM" | jq -r '.dislikeCount')
+            COMMENT_COUNT=$(echo "$ITEM" | jq -r '.commentCount')
+            DURATION_IN_SECONDS=$(echo "$ITEM" | jq -r '.durationInSeconds')
+        
+            PAYLOAD=$(jq -n \
+              --arg videoId "$VIDEO_ID" \
+              --arg title "$TITLE" \
+              --arg description "$DESCRIPTION" \
+              --arg thumbnail "$THUMBNAIL" \
+              --arg publishedAt "$PUBLISHED_AT" \
+              --arg viewCount "$VIEW_COUNT" \
+              --arg likeCount "$LIKE_COUNT" \
+              --arg dislikeCount "$DISLIKE_COUNT" \
+              --arg commentCount "$COMMENT_COUNT" \
+              --arg durationInSeconds "$DURATION_IN_SECONDS" \
+              '{
+                "identifier": $videoId,
+                "title": $title,
+                "blueprint": "dependency",
+                "properties": {
+                  "videoId": $videoId,
+                  "title": $title,
+                  "description": $description,
+                  "thumbnail": $thumbnail,
+                  "publishedAt": $publishedAt,
+                  "viewCount": $viewCount,
+                  "likeCount": $likeCount,
+                  "dislikeCount": $dislikeCount,
+                  "commentCount": $commentCount,
+                  "durationInSeconds": ($durationInSeconds | tonumber)
+                }
+              }')
+        
+            echo "Payload to be ingested:"
+            echo "$PAYLOAD"
+        
+            # Send the payload
+            curl -L 'https://api.getport.io/v1/blueprints/dependency/entities?upsert=true' \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: ${{ secrets.PORT_API_TOKEN }}" \
+              -d "$PAYLOAD"
+          done
+        else
+          echo "Error: Invalid JSON array detected."
+          exit 1
+        fi
