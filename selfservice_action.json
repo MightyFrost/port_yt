@@ -16,7 +16,7 @@
     "type": "GITHUB",
     "org": "MightyFrost",
     "repo": "port_yt",
-    "workflow": "workflow.yml",
+    "workflow": "workflow_updated.yml",
     "workflowInputs": {
       "{{ spreadValue() }}": "{{ .inputs }}",
       "port_context": {
